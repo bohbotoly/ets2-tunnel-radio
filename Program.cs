@@ -598,6 +598,9 @@ namespace ETS2TunnelRadio
         ComboBox _cmbVariant;
         Button _btnEntry, _btnExit, _btnDelete, _btnStation, _btnRestore;
         System.Windows.Forms.Timer _timer;
+        NotifyIcon _tray;
+        bool _reallyExit;      // set only by the tray Exit item
+        bool _trayTipShown;
 
         string DataDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ETS2TunnelRadio");
         string DbFile => Path.Combine(DataDir, "tunnels.json");
@@ -694,8 +697,51 @@ namespace ETS2TunnelRadio
             _txtStream.Leave += (s, e) => SaveSettings();
             _numDelay.ValueChanged += (s, e) => SaveSettings();
 
+            // ---------- system tray: minimize and close both hide to tray; Exit lives in the tray menu ----------
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+            var trayMenu = new ContextMenuStrip();
+            trayMenu.Items.Add("Configure", null, (s, e) => ShowUi());
+            trayMenu.Items.Add(new ToolStripSeparator());
+            trayMenu.Items.Add("Exit", null, (s, e) => { _reallyExit = true; Close(); });
+            _tray = new NotifyIcon
+            {
+                Text = "ETS2 Tunnel Radio",
+                Icon = Icon,
+                ContextMenuStrip = trayMenu,
+                Visible = true,
+            };
+            _tray.DoubleClick += (s, e) => ShowUi();
+            Resize += (s, e) => { if (WindowState == FormWindowState.Minimized) HideToTray(); };
+            FormClosing += (s, e) =>
+            {
+                if (!_reallyExit && e.CloseReason == CloseReason.UserClosing)
+                {
+                    e.Cancel = true;
+                    HideToTray();
+                }
+            };
+
             Load += (s, e) => Init();
             FormClosed += (s, e) => Cleanup();
+        }
+
+        void HideToTray()
+        {
+            Hide();
+            ShowInTaskbar = false;
+            if (!_trayTipShown)
+            {
+                _trayTipShown = true;
+                try { _tray.ShowBalloonTip(2500, "ETS2 Tunnel Radio", "Still running — tunnels stay tunnel-aware. Right-click the tray icon to configure or exit.", ToolTipIcon.Info); } catch { }
+            }
+        }
+
+        void ShowUi()
+        {
+            ShowInTaskbar = true;
+            Show();
+            WindowState = FormWindowState.Normal;
+            Activate();
         }
 
         void Init()
@@ -1170,6 +1216,7 @@ namespace ETS2TunnelRadio
         {
             _timer?.Stop();
             _proxy?.Stop();
+            if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
             try { _radio?.Stop(); _static?.Stop(); } catch { }
             try { _acc?.Dispose(); _mmf?.Dispose(); } catch { }
         }
