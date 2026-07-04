@@ -7,6 +7,11 @@ perfect quality everywhere. Tunnel Radio fixes that: drive into a tunnel and you
 fades into crackling static — drive out and the music comes back. It works with **your
 own in-game radio stations**.
 
+![Inside a tunnel: the radio drops to static](media/tunnel-static.jpg)
+
+🎬 **[Watch the 30-second demo — with sound](media/demo-tunnel.mp4)** — driving in,
+radio fades to static, driving out, music returns.
+
 ---
 
 ## Features
@@ -49,6 +54,8 @@ own in-game radio stations**.
 3. Run `ETS2 Tunnel Radio.exe` once — it installs its tunnel database automatically.
 
 ## Usage
+
+![The app: station name live, one-click station takeover, version check](media/app-ui.jpg)
 
 1. Start the app, make sure **"Run the local tunnel-radio engine"** is ticked.
 2. Click **"Make ALL my stations tunnel-aware"** (your original list is backed up —
