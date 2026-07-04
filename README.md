@@ -9,8 +9,11 @@ own in-game radio stations**.
 
 ![Inside a tunnel: the radio drops to static](media/tunnel-static.jpg)
 
-🎬 **[Watch the 30-second demo — with sound](media/demo-tunnel.mp4)** — driving in,
-radio fades to static, driving out, music returns.
+**🎬 Watch the demo — with sound** (driving in, radio fades to static, driving out, music returns):
+
+[![Watch the ETS2 Tunnel Radio demo on YouTube](media/demo-video-thumb.jpg)](https://youtu.be/JQ-eyY2aldA)
+
+<sub>Prefer not to leave GitHub? [Play the raw MP4 here](media/demo-tunnel.mp4).</sub>
 
 ---
 
