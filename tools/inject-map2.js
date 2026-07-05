@@ -1,6 +1,6 @@
 const fs = require('fs');
 const S = 'C:/Users/Tal/AppData/Local/Temp/claude/C--Users-Tal/d192690d-c755-4b54-aad1-261b68886e89/scratchpad/';
-const M = 'C:/Users/Tal/mapout157e/';
+const M = process.env.ETR_MAPOUT ? process.env.ETR_MAPOUT + '/' : 'C:/Users/Tal/mapout-pm283/';
 
 console.log('loading nodes...');
 const nm = new Map();

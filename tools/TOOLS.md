@@ -1,5 +1,14 @@
 # Database-generation tools
 
+> **v0.4 update:** the pipeline now also supports **map mods** (ProMods 2.83 + Middle-East
+> verified). Mod `.scs` files are ZIP containers — extract the map-relevant packages
+> (`def`, `map`, and the add-on's `defmap`) to folders and pass the folder root via the
+> parser's new `--modsDir` option (a patched `DirArchive` mounts directories; legacy-format
+> sectors are skipped with a `SKIPPED_SECTORS` log line). `build-final.js` reads its inputs
+> from env vars: `ETR_MAPOUT` (parser output dir), `ETR_NWLOG` (parser stderr log),
+> `ETR_OUTTAG` (`promods-me` → writes `tunnels-<ver>-promods-me.json`), `ETR_MAPDESC`.
+> The app picks the DB by detected game version + active map mods automatically.
+
 These scripts rebuild `db/tunnels.json` for a new game version or a different
 DLC/map-mod setup. Regular users never need them — the release zip ships a
 ready-made database.

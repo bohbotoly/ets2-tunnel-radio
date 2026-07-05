@@ -11,18 +11,28 @@ const fs = require('fs');
 const MIN_LEN = 200;       // min chain extent (m) for radio dropout (German ref tunnel ~230m must stay; overpass blips are 10-50m)
 const PAIR_GAP = 550;      // max portal-pair distance to bridge (m)
 const SAMPLE_TOL = 50;     // bridge samples must have a road within this (m)
-const PORTAL_AREA = 800;   // min zone area (m^2) to qualify as a bridgeable portal
+const PORTAL_AREA = 1800;  // min zone area (m^2) to qualify as a bridgeable portal
+                           // (real mouth slabs: >=2184; highway overpass covers: ~1000-1500)
 
+const MAPOUT = process.env.ETR_MAPOUT || 'C:/Users/Tal/mapout160a';
+const NWLOG = process.env.ETR_NWLOG || 'C:/Users/Tal/parser160a.log';
+console.log('inputs:', MAPOUT, NWLOG);
 console.log('loading nodes...');
 const nm = new Map();
-for (const n of JSON.parse(fs.readFileSync('C:/Users/Tal/mapout157e/europe-nodes.json', 'utf8'))) nm.set(String(n.uid), n);
+for (const n of JSON.parse(fs.readFileSync(MAPOUT + '/europe-nodes.json', 'utf8'))) nm.set(String(n.uid), n);
 console.log('loading roads...');
-const roads = JSON.parse(fs.readFileSync('C:/Users/Tal/mapout157e/europe-roads.json', 'utf8'));
+const roads = JSON.parse(fs.readFileSync(MAPOUT + '/europe-roads.json', 'utf8'));
 const rs = [];
 for (const r of roads) {
   const a = nm.get(String(r.startNodeUid)), b = nm.get(String(r.endNodeUid));
   if (!a || !b) continue;
-  rs.push({ ax: a.x, az: a.y, bx: b.x, bz: b.y, un: /^un/i.test(r.roadLookToken || '') && ((r.rawFlags >>> 0) & 0x5) === 0x5 });
+  // un* = underground road looks. Enclosed bores carry a BOTH-SIDES terrain-flag
+  // pattern in the low nibble: {1,3}=0xA (modern reworks, e.g. 1.60 NL un02) or
+  // {0,2}=0x5 (older Scandinavia style). Mixed/partial nibbles (0x9 etc.) are open
+  // trenches (Dortmund sunken highway = un04/0x9) — excluded. Railway looks excluded.
+  const lk = r.roadLookToken || '';
+  const nib = (r.rawFlags >>> 0) & 0xF;
+  rs.push({ ax: a.x, az: a.y, bx: b.x, bz: b.y, ha: a.z, hb: b.z, unNib: nib, un: /^un(?!rai|rdai)/i.test(lk) && (nib === 0xA || nib === 0x5) });
 }
 console.log('road segments:', rs.length);
 
@@ -52,20 +62,21 @@ function nearestRoadPt(px, pz, tol) {
 }
 
 const zones = [];
-for (const ln of fs.readFileSync('C:/Users/Tal/parser157L.log', 'utf8').split(/[\r\n]+/)) {
+for (const ln of fs.readFileSync(NWLOG, 'utf8').split(/[\r\n]+/)) {
   const m = ln.match(/^NW (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) ([\d.]+) ([\d.]+) (-?[\d.]+) (-?\d+)$/);
-  if (m) zones.push({ x: +m[1], z: +m[2], w: +m[4], len: +m[5], rot: +m[6] });
+  if (m) zones.push({ x: +m[1], z: +m[2], h: +m[3], w: +m[4], len: +m[5], rot: +m[6] });
 }
 console.log('zones:', zones.length);
 
 const out = [];
-// 1) zone -> oriented segment (v5 representation)
+// 1) zone -> oriented segment (v5 representation); `big` marks portal-strength evidence
 for (const zn of zones) {
   const dx = Math.cos(zn.rot), dz = Math.sin(zn.rot);
   out.push({
     Ax: zn.x - dx * zn.len / 2, Az: zn.z - dz * zn.len / 2,
     Bx: zn.x + dx * zn.len / 2, Bz: zn.z + dz * zn.len / 2,
     HalfWidth: Math.max(zn.w / 2 + 3, 9),
+    big: zn.w * zn.len >= PORTAL_AREA,
   });
 }
 
@@ -92,7 +103,9 @@ for (let a = 0; a < portals.length; a++) {
       donePair.add(key);
       const zb = portals[b];
       const gap = Math.hypot(za.x - zb.x, za.z - zb.z);
-      if (gap < 40 || gap > PAIR_GAP) continue;
+      // big mouth slabs (long bores, e.g. 1.60 NL dip tunnels) may pair across up to 1.4 km
+      const maxGap = (za.w * za.len >= 2500 && zb.w * zb.len >= 2500) ? 1400 : PAIR_GAP;
+      if (gap < 40 || gap > maxGap) continue;
       const steps = Math.ceil(gap / 25);
       const path = [];
       let ok = true;
@@ -107,17 +120,51 @@ for (let a = 0; a < portals.length; a++) {
       const hw = Math.max(13, Math.min(za.w, zb.w) / 2 + 3);
       for (let p = 1; p < path.length; p++) {
         if (Math.hypot(path[p][0] - path[p-1][0], path[p][1] - path[p-1][1]) < 1) continue;
-        out.push({ Ax: path[p-1][0], Az: path[p-1][1], Bx: path[p][0], Bz: path[p][1], HalfWidth: hw });
+        out.push({ Ax: path[p-1][0], Az: path[p-1][1], Bx: path[p][0], Bz: path[p][1], HalfWidth: hw, big: true });
       }
     }
   }
 }
 console.log('bridged portal pairs:', bridges, '| segments so far:', out.length);
 
-// 3) un-look enclosed roads (Scandinavia / Nordic Horizons)
-let un = 0;
-rs.forEach(s => { if (s.un) { out.push({ Ax: s.ax, Az: s.az, Bx: s.bx, Bz: s.bz, HalfWidth: 13 }); un++; } });
-console.log('un-enclosed roads:', un);
+// 3) un-look enclosed roads. Old-style bores ({0,2} = nibble 0x5, Scandinavia) are
+// portal-delimited by construction — trusted standalone. Modern reworks ({1,3} = 0xA,
+// e.g. 1.60 NL) extend the SAME look+flags onto open approach ramps, so 0xA segments
+// only count where the ZONE evidence agrees: within 35 m of the zone/bridge coverage
+// built above (mouth slabs + portal-pair corridors). The elevated A15 approach sits
+// beyond the mouth slab -> outside every corridor -> excluded.
+const covGrid = new Map();
+out.forEach((t, i) => {
+  if (!t.big) return;   // only portal-strength evidence gates modern un segments
+  const k = Math.floor((t.Ax + t.Bx) / 2 / 200) + '_' + Math.floor((t.Az + t.Bz) / 2 / 200);
+  if (!covGrid.has(k)) covGrid.set(k, []);
+  covGrid.get(k).push(i);
+});
+function ptSeg2(px, pz, t) {
+  const dx = t.Bx - t.Ax, dz = t.Bz - t.Az, l2 = dx * dx + dz * dz;
+  let u = l2 ? ((px - t.Ax) * dx + (pz - t.Az) * dz) / l2 : 0; u = Math.max(0, Math.min(1, u));
+  return Math.hypot(px - (t.Ax + u * dx), pz - (t.Az + u * dz));
+}
+function nearCoverage(s) {
+  const mx = (s.ax + s.bx) / 2, mz = (s.az + s.bz) / 2;
+  const cx = Math.floor(mx / 200), cz = Math.floor(mz / 200);
+  for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+    const arr = covGrid.get((cx + dx) + '_' + (cz + dz)); if (!arr) continue;
+    for (const i of arr) {
+      const t = out[i];
+      if (ptSeg2(s.ax, s.az, t) < 35 || ptSeg2(s.bx, s.bz, t) < 35 || ptSeg2(mx, mz, t) < 35) return true;
+    }
+  }
+  return false;
+}
+let un = 0, unSkipped = 0;
+for (const s of rs) {
+  if (!s.un) continue;
+  if (s.unNib === 0xA && !nearCoverage(s)) { unSkipped++; continue; }
+  out.push({ Ax: s.ax, Az: s.az, Bx: s.bx, Bz: s.bz, HalfWidth: 13 });
+  un++;
+}
+console.log('un-enclosed roads:', un, '(0xA segs without zone evidence skipped:', unSkipped + ')');
 
 // 4) chain + length filter (Tal's rule: short covers don't cut radio)
 const par = out.map((_, i) => i);
@@ -169,13 +216,24 @@ try {
   const vm = gl.match(/Loaded pack set version ([\d.]+)/);
   if (vm) gameVer = vm[1];
 } catch {}
-fs.writeFileSync('C:/Users/Tal/tunnels.meta.json', JSON.stringify({
+const OUTTAG = process.env.ETR_OUTTAG || '';   // '' = vanilla, 'promods', 'promods-me'
+const meta = JSON.stringify({
   gameVersion: gameVer,
-  map: 'ETS2 + DLCs + Nordic Horizons',
-  generator: 'v6.1 noweather-portal-bridge',
+  mapTag: OUTTAG,
+  map: process.env.ETR_MAPDESC || 'ETS2 + map DLCs (vanilla)',
+  generator: 'v6.4 noweather-portal-bridge',
   segments: final.length,
-}, null, 2));
-console.log('wrote', final.length, 'tunnel segments (game', gameVer + ')');
+}, null, 2);
+fs.writeFileSync('C:/Users/Tal/tunnels.meta.json', meta);
+// versioned (and map-tagged) copies so the app can hot-pick per game version + map mods
+const mm = /^(\d+\.\d+)/.exec(gameVer);
+if (mm) {
+  const suffix = OUTTAG ? `${mm[1]}-${OUTTAG}` : mm[1];
+  fs.writeFileSync(`C:/Users/Tal/tunnels-${suffix}.json`, JSON.stringify(final, null, 0));
+  fs.writeFileSync(`C:/Users/Tal/tunnels-${suffix}.meta.json`, meta);
+  console.log('also wrote tunnels-' + suffix + '.json');
+}
+console.log('wrote', final.length, 'tunnel segments (game', gameVer, OUTTAG || 'vanilla', ')');
 
 function chk(name, x, z, want) {
   let cov = false, best = 1e9;
@@ -186,12 +244,17 @@ function chk(name, x, z, want) {
   }
   console.log('  ' + name + ': ' + best.toFixed(0) + 'm ' + (cov ? 'COVERED' : 'clear') + ' ' + (cov === want ? 'OK' : '*** WRONG ***'));
 }
-chk('German tunnel', 10235, -9226, true);
-chk('Kiruna tunnel', 26908, -97826, true);
-chk('A4 NL tunnel', -19976, -10874, true);
-chk('Dortmund barrier', -16784, -10825, false);
-chk('open highway A', 43310, -104798, false);
-chk('Kiruna portal exit', 27006, -97900, false);
+// Reference set for VANILLA 1.60 + map DLCs (Nordic Horizons points removed — that
+// territory doesn't exist without the mod; 1.57 refs kept as observations since the
+// 1.60 map rework may have moved things).
+chk('NL tunnel 1.60 (drive-tested)', -21005, -9453, true);
+chk('Kiruna tunnel (NH DLC)', 26908, -97826, true);
+chk('Kiruna portal exit (open sky)', 27006, -97900, false);
+chk('A15 elevated approach (open sky)', -20863, -8662, false);
+chk('A73 Venlo overpasses (open sky)', -15454, -6562, false);
+chk('German tunnel (1.57 ref)', 10235, -9226, true);
+// retired: A4 landtunnel 1.57 ref (-19976,-10874) — the 1.60 NL rework relocated it
+chk('Dortmund barrier (open sky)', -16784, -10825, false);
 chk('Lodz LKW street (open sky)', 31300, -6198, false);
 chk('Lodz east street (open sky)', 32191, -6003, false);
 chk('Osnabrueck A1 (open sky)', -10168, -10445, false);

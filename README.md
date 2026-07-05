@@ -1,5 +1,11 @@
 # ETS2 Tunnel Radio 📻
 
+> # 🚀 v0.4 — now supporting ETS2 **1.60** · **ProMods 2.83** · **Middle-East Add-on** 🇮🇱
+> Two tunnel databases ship in the box — vanilla **1.60** (all map DLCs incl. Nordic Horizons)
+> and **ProMods 2.83 + Middle-East** (yes, including the Carmel tunnels in Israel).
+> The app **auto-detects your game version AND active map mods** and loads the matching
+> database — switch between vanilla and ProMods profiles and it follows you automatically.
+
 **Realistic radio signal loss in tunnels for Euro Truck Simulator 2.**
 
 In real life, FM radio dies when you drive into a long tunnel. In ETS2 it plays on at
@@ -22,6 +28,9 @@ own in-game radio stations**.
 - 🚇 **Automatic tunnel detection** — a database of every tunnel in the map, built from
   the game's own "covered space" zone data (the same data the game uses to stop rain
   and add reverb inside tunnels). No manual setup for known tunnels.
+- 🗺️ **Map-aware** — ships with TWO databases (vanilla 1.60 and ProMods 2.83 + Middle-East)
+  and picks the right one automatically by reading which map mods your game actually
+  loaded. Drive the Carmel tunnels with an Israeli station on. 🇮🇱
 - 📻 **Works with the real in-game radio** — one click reroutes your existing station
   list through the local tunnel engine. You keep your stations, names and order;
   the in-game radio UI and volume behave exactly as before.
@@ -37,8 +46,11 @@ own in-game radio stations**.
 
 ## Requirements
 
-1. **Euro Truck Simulator 2** (the bundled tunnel database targets the game version
-   shown on the release page; the app warns on mismatch).
+1. **Euro Truck Simulator 2 1.60.x** — the bundled databases are built and tested on 1.60.
+   Vanilla DB covers the base map + all map DLCs (missing DLC regions simply never trigger).
+   The ProMods database requires **ProMods 2.83 + Middle-East Add-on** active in-game.
+   The app shows your game version and map mods next to the database it loaded, and warns
+   clearly on any mismatch.
 2. **.NET 8 Desktop Runtime** (free, one-time install from Microsoft:
    https://dotnet.microsoft.com/download/dotnet/8.0 → ".NET Desktop Runtime").
 3. **Telemetry plugin** — ✅ **included in this zip** (`telemetry-plugin\scs-telemetry.dll`,

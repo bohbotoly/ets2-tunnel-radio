@@ -588,7 +588,10 @@ namespace ETS2TunnelRadio
         // ---- UI ----
         Label _lblStatus, _lblPos, _lblVer, _lblState, _lblProxy;
         string _gameVersion = "";      // from game.log.txt / running exe
-        string _dbVersion = "";        // from tunnels.meta.json
+        string _dbVersion = "";        // from tunnels meta
+        string _mapTag = "";           // detected map mods: "" = vanilla, "promods", "promods-me"
+        string _dbMapTag = "";         // map tag the loaded DB was built for
+        string _dbFileLoaded = "";     // which tunnels*.json is active
         uint _pluginRev;
         int _verRefresh;
         ListBox _lstTunnels;
@@ -748,6 +751,7 @@ namespace ETS2TunnelRadio
         {
             NoiseBank.Build();
             BuildAudio();
+            DetectGameVersion();   // before LoadDb so the version-matched DB gets picked
             LoadDb();
             LoadSettings();
             LoadStations();
@@ -806,7 +810,14 @@ namespace ETS2TunnelRadio
 
             UpdateStateLabel();
             _lblProxy.Text = "engine: " + _proxy.Status;
-            if (_verRefresh-- <= 0) { _verRefresh = 100; DetectGameVersion(); UpdateVersionLabel(); }   // every ~10 s
+            if (_verRefresh-- <= 0)
+            {
+                _verRefresh = 100;   // every ~10 s
+                DetectGameVersion();
+                // game version or map-mod setup changed -> hot-swap to the better-matching DB
+                if (ResolveDbFile() != _dbFileLoaded) LoadDb();
+                UpdateVersionLabel();
+            }
 
             UpdateAudio(_inTunnel);
         }
@@ -815,15 +826,26 @@ namespace ETS2TunnelRadio
         {
             try
             {
-                // primary: the game's own log (full build number, rewritten every game start)
+                // the game's own log: version near the top, mod mounts wherever the profile loaded
                 string log = Path.Combine(GameDocs, "game.log.txt");
                 if (File.Exists(log))
                 {
                     using var fs = new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-                    var buf = new byte[Math.Min(fs.Length, 64 * 1024)];
-                    fs.Read(buf, 0, buf.Length);
-                    var m = System.Text.RegularExpressions.Regex.Match(Encoding.UTF8.GetString(buf), @"Loaded pack set version ([\d.]+)");
-                    if (m.Success) { _gameVersion = m.Groups[1].Value; return; }
+                    var head = new byte[Math.Min(fs.Length, 64 * 1024)];
+                    fs.Read(head, 0, head.Length);
+                    var m = System.Text.RegularExpressions.Regex.Match(Encoding.UTF8.GetString(head), @"Loaded pack set version ([\d.]+)");
+                    if (m.Success) _gameVersion = m.Groups[1].Value;
+
+                    // mod mounts: read the tail (latest profile load wins)
+                    long tailLen = Math.Min(fs.Length, 512 * 1024);
+                    fs.Seek(-tailLen, SeekOrigin.End);
+                    var tail = new byte[tailLen];
+                    fs.Read(tail, 0, tail.Length);
+                    string txt = Encoding.UTF8.GetString(head) + Encoding.UTF8.GetString(tail);
+                    _mapTag = txt.Contains("promods-me-defmap") ? "promods-me"
+                            : (txt.Contains("promods-eu-map") || txt.Contains("promods-map")) ? "promods"
+                            : "";
+                    if (!string.IsNullOrEmpty(_gameVersion)) return;
                 }
                 // fallback: version stamp of a running game exe
                 foreach (var p in System.Diagnostics.Process.GetProcessesByName("eurotrucks2"))
@@ -839,31 +861,58 @@ namespace ETS2TunnelRadio
             catch { }
         }
 
+        // preferred DB file ladder for the detected game version + map mods
+        string ResolveDbFile()
+        {
+            string mm = MajorMinor(_gameVersion);
+            if (!string.IsNullOrEmpty(mm))
+            {
+                if (!string.IsNullOrEmpty(_mapTag))
+                {
+                    string tagged = Path.Combine(DataDir, $"tunnels-{mm}-{_mapTag}.json");
+                    if (File.Exists(tagged)) return tagged;
+                }
+                string versioned = Path.Combine(DataDir, $"tunnels-{mm}.json");
+                if (File.Exists(versioned)) return versioned;
+            }
+            return DbFile;
+        }
+
         static string MajorMinor(string v)
         {
             var parts = (v ?? "").Split('.');
             return parts.Length >= 2 ? parts[0] + "." + parts[1] : v ?? "";
         }
 
+        static string TagName(string tag) =>
+            tag == "promods-me" ? "ProMods ME" : tag == "promods" ? "ProMods" : "vanilla";
+
         void UpdateVersionLabel()
         {
             string game = string.IsNullOrEmpty(_gameVersion) ? "not detected" : _gameVersion;
             string db = string.IsNullOrEmpty(_dbVersion) ? "unknown" : _dbVersion;
             string plug = _pluginRev > 0 ? $"   ·   plugin r{_pluginRev}" : "";
+            string mapNote = _mapTag == "" ? "" : $" [{TagName(_mapTag)}]";
+            string dbNote = _dbMapTag == "" ? "" : $" [{TagName(_dbMapTag)}]";
             if (string.IsNullOrEmpty(_gameVersion) || string.IsNullOrEmpty(_dbVersion))
             {
-                _lblVer.Text = $"Game: {game}   ·   tunnel DB: {db}{plug}";
+                _lblVer.Text = $"Game: {game}{mapNote}   ·   tunnel DB: {db}{dbNote}{plug}";
                 _lblVer.ForeColor = Color.DimGray;
             }
-            else if (MajorMinor(_gameVersion) == MajorMinor(_dbVersion))
-            {
-                _lblVer.Text = $"Game {game}   ·   tunnel DB {db}  ✓{plug}";
-                _lblVer.ForeColor = Color.DarkGreen;
-            }
-            else
+            else if (MajorMinor(_gameVersion) != MajorMinor(_dbVersion))
             {
                 _lblVer.Text = $"Game {game}  ⚠  tunnel DB built for {db} — tunnels may be off{plug}";
                 _lblVer.ForeColor = Color.DarkOrange;
+            }
+            else if (_mapTag != _dbMapTag)
+            {
+                _lblVer.Text = $"Game {game}{mapNote}  ⚠  DB is {TagName(_dbMapTag)} — mod-map tunnels missing{plug}";
+                _lblVer.ForeColor = Color.DarkOrange;
+            }
+            else
+            {
+                _lblVer.Text = $"Game {game}{mapNote}   ·   tunnel DB {db}{dbNote}  ✓{plug}";
+                _lblVer.ForeColor = Color.DarkGreen;
             }
         }
 
@@ -1011,19 +1060,25 @@ namespace ETS2TunnelRadio
             string dbg = Path.Combine(Path.GetTempPath(), "ETR-debug.log");
             try
             {
-                // first run after unzip: install the bundled DB from next to the exe
+                // first run after unzip: install any bundled DBs from next to the exe
                 string exeDir = AppContext.BaseDirectory;
-                if (!File.Exists(DbFile) && File.Exists(Path.Combine(exeDir, "tunnels.json")))
+                Directory.CreateDirectory(DataDir);
+                foreach (var f in Directory.GetFiles(exeDir, "tunnels*.json"))
                 {
-                    Directory.CreateDirectory(DataDir);
-                    File.Copy(Path.Combine(exeDir, "tunnels.json"), DbFile, false);
-                    string m = Path.Combine(exeDir, "tunnels.meta.json");
-                    if (File.Exists(m)) File.Copy(m, Path.Combine(DataDir, "tunnels.meta.json"), true);
+                    string dst = Path.Combine(DataDir, Path.GetFileName(f));
+                    if (!File.Exists(dst)) File.Copy(f, dst, false);
                 }
-                File.AppendAllText(dbg, $"[{DateTime.Now:HH:mm:ss}] DataDir={DataDir}  DbFile={DbFile}  Exists={File.Exists(DbFile)}\r\n");
-                if (File.Exists(DbFile))
+
+                // pick the DB matching the running game version + map mods, else the generic one
+                string db = ResolveDbFile();
+                string meta = Path.ChangeExtension(db, null) + ".meta.json";
+                if (!File.Exists(meta)) meta = Path.Combine(DataDir, "tunnels.meta.json");
+                _dbFileLoaded = db;
+
+                File.AppendAllText(dbg, $"[{DateTime.Now:HH:mm:ss}] DataDir={DataDir}  db={Path.GetFileName(db)}  Exists={File.Exists(db)}  gameVer={_gameVersion}  mapTag={(_mapTag == "" ? "vanilla" : _mapTag)}\r\n");
+                if (File.Exists(db))
                 {
-                    var list = JsonSerializer.Deserialize<List<Tunnel>>(File.ReadAllText(DbFile));
+                    var list = JsonSerializer.Deserialize<List<Tunnel>>(File.ReadAllText(db));
                     if (list != null) { _tunnels.Clear(); _tunnels.AddRange(list); }
                 }
                 if (File.Exists(ManualFile))
@@ -1031,11 +1086,12 @@ namespace ETS2TunnelRadio
                     var list = JsonSerializer.Deserialize<List<Tunnel>>(File.ReadAllText(ManualFile));
                     if (list != null) { _manual.Clear(); _manual.AddRange(list); }
                 }
-                string metaFile = Path.Combine(DataDir, "tunnels.meta.json");
-                if (File.Exists(metaFile))
+                _dbVersion = ""; _dbMapTag = "";
+                if (File.Exists(meta))
                 {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(metaFile));
+                    using var doc = JsonDocument.Parse(File.ReadAllText(meta));
                     if (doc.RootElement.TryGetProperty("gameVersion", out var gv)) _dbVersion = gv.GetString() ?? "";
+                    if (doc.RootElement.TryGetProperty("mapTag", out var mt)) _dbMapTag = mt.GetString() ?? "";
                 }
                 File.AppendAllText(dbg, $"[{DateTime.Now:HH:mm:ss}] Loaded {_tunnels.Count} auto + {_manual.Count} manual tunnels OK (DB for game {_dbVersion})\r\n");
             }
