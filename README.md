@@ -37,6 +37,9 @@ own in-game radio stations**.
 -  **10 different static flavors** — FM hiss, AM crackle, storm static, a distant
   station bleeding through, and more. A different one every tunnel, so it never gets
   repetitive. All procedurally generated (no copyrighted samples).
+-  **FM or DAB+ behavior — your choice**: classic FM fades into crackling static;
+  digital (DAB+) mode does the realistic "cliff effect" — a second of robotic
+  glitching, then dead silence, and a re-lock stutter when the signal returns.
 -  **Manual tunnel tagging** — for map mods or missed tunnels: press *Tag Entry* at
   the portal, *Tag Exit* at the other end. Saved forever, survives updates.
 -  **Realistic threshold** — short underpasses and bridges do NOT kill the signal;

@@ -49,6 +49,8 @@ namespace ETS2TunnelRadio
         };
         public static short[][] Pcm;    // mono 16-bit
         public static byte[][] Wav;
+        public static short[] DigitalPcm;   // DAB+ dropout: ~1.4 s glitch burst, then silence
+        public static byte[] DigitalWav;
 
         public static void Build()
         {
@@ -77,6 +79,43 @@ namespace ETS2TunnelRadio
                 Pcm[v] = Quantize(s, 0.40);
                 Wav[v] = ToWav(Pcm[v]);
             }
+            BuildDigitalGlitch();
+        }
+
+        // DAB+/digital radio doesn't fade — it stutters robotically for a moment, then
+        // cuts to dead silence (the "cliff effect"). ~1.4 s of chopped sample-hold
+        // artifacts with gaps, ending in silence; played ONCE at signal loss/reacquire.
+        static void BuildDigitalGlitch()
+        {
+            var rnd = new Random(4242);
+            int n = (int)(Rate * 1.4);
+            var s = new double[n];
+            int i = 0;
+            var hold = new double[Rate / 25];                     // 40 ms artifact buffer
+            while (i < n - Rate / 10)
+            {
+                int mode = rnd.Next(3);
+                if (mode == 0)
+                {   // stutter: repeat a garbled chunk 2-4 times
+                    for (int k = 0; k < hold.Length; k++) hold[k] = Math.Round((rnd.NextDouble() * 2 - 1) * 5) / 5;
+                    int reps = 2 + rnd.Next(3);
+                    for (int r2 = 0; r2 < reps && i < n; r2++)
+                        for (int k = 0; k < hold.Length && i < n; k++) s[i++] = hold[k] * 0.5;
+                }
+                else if (mode == 1)
+                {   // hard silence gap
+                    i += Rate / 30 + rnd.Next(Rate / 15);
+                }
+                else
+                {   // brief bitcrushed tone-ish burst
+                    double f = 300 + rnd.NextDouble() * 900;
+                    int len = Rate / 30 + rnd.Next(Rate / 20);
+                    for (int k = 0; k < len && i < n; k++, i++)
+                        s[i] = Math.Round(Math.Sin(2 * Math.PI * f * k / Rate) * 3) / 3 * 0.4;
+                }
+            }
+            DigitalPcm = Quantize(s, 0.55);
+            DigitalWav = ToWav(DigitalPcm);
         }
 
         // 0: classic FM inter-station hiss — bright white noise, slight high tilt
@@ -299,6 +338,7 @@ namespace ETS2TunnelRadio
         public const int Port = 17771;
         readonly Func<bool> _tunnelState;       // predicted state (buffer-compensated)
         readonly Func<int> _variant;
+        readonly Func<bool> _digital;           // true = DAB+ mode (glitch -> silence)
         readonly Func<string> _sourceUrl;       // legacy /tunnelradio relay URL
         readonly Func<int, string> _stationUrl; // /s/<idx> -> original station URL
         public volatile string Status = "off";
@@ -310,8 +350,8 @@ namespace ETS2TunnelRadio
         TcpListener _listener;
         volatile bool _run;
 
-        public RadioProxy(Func<bool> tunnelState, Func<int> variant, Func<string> sourceUrl, Func<int, string> stationUrl)
-        { _tunnelState = tunnelState; _variant = variant; _sourceUrl = sourceUrl; _stationUrl = stationUrl; }
+        public RadioProxy(Func<bool> tunnelState, Func<int> variant, Func<bool> digital, Func<string> sourceUrl, Func<int, string> stationUrl)
+        { _tunnelState = tunnelState; _variant = variant; _digital = digital; _sourceUrl = sourceUrl; _stationUrl = stationUrl; }
 
         internal static void Dbg(string msg)
         {
@@ -511,24 +551,49 @@ namespace ETS2TunnelRadio
 
             var sw = System.Diagnostics.Stopwatch.StartNew();
             long sent = 0;
+            bool prevTun = false;
+            long glitchPos = long.MaxValue;                       // >= length means "not glitching"
             try
             {
                 while (_run && net.CanWrite)
                 {
                     bool tun = _tunnelState();
+                    bool digital = _digital();
+                    if (digital && tun != prevTun) glitchPos = 0; // signal lost OR reacquired: stutter burst
+                    prevTun = tun;
                     double target = tun ? 1 : 0;
                     var pcmStatic = NoiseBank.Pcm[Math.Max(0, Math.Min(NoiseBank.Pcm.Length - 1, _variant()))];
+                    var glitch = NoiseBank.DigitalPcm;
 
                     int got = relay.Read(srcBuf, srcBuf.Length);
                     if (_newestConn == myConn) Status = "game connected — " + relay.State;
                     Interlocked.Exchange(ref _lastActiveTicks, DateTime.UtcNow.Ticks);
                     for (int i = 0; i < frame; i++)
                     {
-                        xfade += (target - xfade) * 0.0012;               // ~0.3 s crossfade
-                        double st = pcmStatic[staticPos % pcmStatic.Length] / 32768.0;
-                        staticPos++;
-                        double l = (i * 2 < got ? srcBuf[i * 2] : 0) * (1 - xfade) + st * xfade;
-                        double r = (i * 2 + 1 < got ? srcBuf[i * 2 + 1] : 0) * (1 - xfade) + st * xfade;
+                        double l, r;
+                        if (digital)
+                        {   // DAB+ cliff effect: no fade — glitch burst on transitions, dead silence inside
+                            if (glitchPos < glitch.Length)
+                            {
+                                double g = glitch[glitchPos++] / 32768.0;
+                                l = g; r = g;
+                            }
+                            else if (tun) { l = 0; r = 0; }
+                            else
+                            {
+                                l = i * 2 < got ? srcBuf[i * 2] : 0;
+                                r = i * 2 + 1 < got ? srcBuf[i * 2 + 1] : 0;
+                            }
+                            xfade = target;                        // keep FM state in sync for mode switches
+                        }
+                        else
+                        {   // FM: gradual crossfade into analog static
+                            xfade += (target - xfade) * 0.0012;    // ~0.3 s crossfade
+                            double st = pcmStatic[staticPos % pcmStatic.Length] / 32768.0;
+                            staticPos++;
+                            l = (i * 2 < got ? srcBuf[i * 2] : 0) * (1 - xfade) + st * xfade;
+                            r = (i * 2 + 1 < got ? srcBuf[i * 2 + 1] : 0) * (1 - xfade) + st * xfade;
+                        }
                         if (l > 1) l = 1; else if (l < -1) l = -1;
                         if (r > 1) r = 1; else if (r < -1) r = -1;
                         mix[i * 2] = (short)(l * 32767);
@@ -598,7 +663,7 @@ namespace ETS2TunnelRadio
         TextBox _txtName, _txtStream;
         NumericUpDown _numWidth, _numDelay;
         CheckBox _chkForce, _chkTone, _chkProxy;
-        ComboBox _cmbVariant;
+        ComboBox _cmbVariant, _cmbMode;
         Button _btnEntry, _btnExit, _btnDelete, _btnStation, _btnRestore;
         System.Windows.Forms.Timer _timer;
         NotifyIcon _tray;
@@ -645,7 +710,13 @@ namespace ETS2TunnelRadio
             foreach (var nm in NoiseBank.Names) _cmbVariant.Items.Add(nm);
             _cmbVariant.SelectedIndex = 0;
 
-            var grpProxy = new GroupBox { Left = 8, Top = 10, Width = 424, Height = 164, Text = "Game-radio mode: your in-game stations, tunnel-aware" };
+            var lblMode = new Label { Left = 10, Top = 16, Width = 84, Text = "Radio type:" };
+            _cmbMode = new ComboBox { Left = 96, Top = 12, Width = 250, DropDownStyle = ComboBoxStyle.DropDownList };
+            _cmbMode.Items.Add("FM — fades into static (classic)");
+            _cmbMode.Items.Add("DAB+ / digital — glitches, then silence");
+            _cmbMode.SelectedIndex = 0;
+
+            var grpProxy = new GroupBox { Left = 8, Top = 44, Width = 424, Height = 164, Text = "Game-radio mode: your in-game stations, tunnel-aware" };
             var lblSrc = new Label { Left = 10, Top = 24, Width = 90, Text = "Fallback relay:" };
             _txtStream = new TextBox { Left = 100, Top = 21, Width = 310, Text = "https://glzwizzlv.bynetcdn.com/glglz_mp3" };
             _chkProxy = new CheckBox { Left = 10, Top = 50, Width = 300, Text = "Run the local tunnel-radio engine (port 17771)" };
@@ -659,14 +730,14 @@ namespace ETS2TunnelRadio
 
             var lblHelp = new Label
             {
-                Left = 8, Top = 182, Width = 424, Height = 116, ForeColor = Color.FromArgb(0, 80, 160),
+                Left = 8, Top = 216, Width = 424, Height = 116, ForeColor = Color.FromArgb(0, 80, 160),
                 Text = "Setup: click \"Make ALL my stations tunnel-aware\", restart the game, then\r\n" +
                        "tune the in-game radio to ANY of your stations — it plays through this\r\n" +
                        "engine and fades to static inside tunnels.\r\n" +
                        "Keep this app running while you play (or click Restore originals).\r\n" +
                        "Without the engine, the app plays static from your speakers in tunnels."
             };
-            pageRadio.Controls.AddRange(new Control[] { grpProxy, lblHelp });
+            pageRadio.Controls.AddRange(new Control[] { lblMode, _cmbMode, grpProxy, lblHelp });
 
             // ---------- Edit tab (manual tunnels) ----------
             var grpTag = new GroupBox { Left = 8, Top = 10, Width = 424, Height = 400, Text = "Manual tunnels (drive in, tag Entry; drive out, tag Exit)" };
@@ -699,6 +770,7 @@ namespace ETS2TunnelRadio
             };
             _txtStream.Leave += (s, e) => SaveSettings();
             _numDelay.ValueChanged += (s, e) => SaveSettings();
+            _cmbMode.SelectedIndexChanged += (s, e) => SaveSettings();
 
             // ---------- system tray: minimize and close both hide to tray; Exit lives in the tray menu ----------
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
@@ -755,7 +827,8 @@ namespace ETS2TunnelRadio
             LoadDb();
             LoadSettings();
             LoadStations();
-            _proxy = new RadioProxy(() => _proxyTunnel, () => _variantIdx, () => _txtStream.Text.Trim(),
+            _proxy = new RadioProxy(() => _proxyTunnel, () => _variantIdx, () => _cmbMode.SelectedIndex == 1,
+                () => _txtStream.Text.Trim(),
                 i => (i >= 0 && i < _stations.Count && _stations[i] != null) ? _stations[i].Url : null);
             if (_chkProxy.Checked) _proxy.Start();
             SetVariant(_pick.Next(NoiseBank.Names.Length), false);
@@ -924,7 +997,11 @@ namespace ETS2TunnelRadio
             if (proxyOn && !_proxy.ClientLive)
             { _lblState.Text = "RADIO OFF"; _lblState.ForeColor = Color.Firebrick; return; }
             if (_inTunnel)
-            { _lblState.Text = "STATIC  (no signal)"; _lblState.ForeColor = Color.DarkOrange; return; }
+            {
+                _lblState.Text = _cmbMode.SelectedIndex == 1 ? "NO SIGNAL  (DAB+)" : "STATIC  (no signal)";
+                _lblState.ForeColor = Color.DarkOrange;
+                return;
+            }
             string name = "RADIO";
             if (proxyOn)
             {
@@ -1119,6 +1196,7 @@ namespace ETS2TunnelRadio
             public bool ProxyOn { get; set; }
             public int DelaySec { get; set; } = 5;
             public int Variant { get; set; }
+            public int RadioMode { get; set; }   // 0 = FM static, 1 = DAB+ digital dropout
         }
 
         void LoadSettings()
@@ -1131,6 +1209,7 @@ namespace ETS2TunnelRadio
                 if (!string.IsNullOrWhiteSpace(s.StreamUrl)) _txtStream.Text = s.StreamUrl;
                 _numDelay.Value = Math.Max(_numDelay.Minimum, Math.Min(_numDelay.Maximum, s.DelaySec));
                 if (s.Variant >= 0 && s.Variant < _cmbVariant.Items.Count) _cmbVariant.SelectedIndex = s.Variant;
+                if (s.RadioMode >= 0 && s.RadioMode < _cmbMode.Items.Count) _cmbMode.SelectedIndex = s.RadioMode;
                 _chkProxy.Checked = s.ProxyOn;
             }
             catch { }
@@ -1147,6 +1226,7 @@ namespace ETS2TunnelRadio
                     ProxyOn = _chkProxy.Checked,
                     DelaySec = (int)_numDelay.Value,
                     Variant = _cmbVariant.SelectedIndex,
+                    RadioMode = _cmbMode.SelectedIndex,
                 }, new JsonSerializerOptions { WriteIndented = true }));
             }
             catch { }
@@ -1262,7 +1342,15 @@ namespace ETS2TunnelRadio
             try
             {
                 _radio.Stop(); _static.Stop();
-                if (want == "static") _static.PlayLooping();
+                if (want == "static")
+                {
+                    if (_cmbMode.SelectedIndex == 1)
+                    {   // DAB+ standalone: one glitch burst, then natural silence
+                        _static = new SoundPlayer(new MemoryStream(NoiseBank.DigitalWav));
+                        _static.Play();
+                    }
+                    else _static.PlayLooping();
+                }
                 else if (want == "radio") _radio.PlayLooping();
             }
             catch { }
