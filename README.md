@@ -1,6 +1,6 @@
-# ETS2 Tunnel Radio 📻
+# ETS2 Tunnel Radio
 
-> # 🚀 v0.4 — now supporting ETS2 **1.60** · **ProMods 2.83** · **Middle-East Add-on** 🇮🇱
+> #  v0.4 — now supporting ETS2 **1.60** · **ProMods 2.83** · **Middle-East Add-on** 🇮🇱
 > Two tunnel databases ship in the box — vanilla **1.60** (all map DLCs incl. Nordic Horizons)
 > and **ProMods 2.83 + Middle-East** (yes, including the Carmel tunnels in Israel).
 > The app **auto-detects your game version AND active map mods** and loads the matching
@@ -15,7 +15,7 @@ own in-game radio stations**.
 
 ![Inside a tunnel: the radio drops to static](media/tunnel-static.jpg)
 
-**🎬 Watch the demo — with sound** (driving in, radio fades to static, driving out, music returns):
+**Watch the demo — with sound** (driving in, radio fades to static, driving out, music returns):
 
 [![Watch the ETS2 Tunnel Radio demo on YouTube](media/demo-video-thumb.jpg)](https://youtu.be/JQ-eyY2aldA)
 
@@ -25,23 +25,23 @@ own in-game radio stations**.
 
 ## Features
 
-- 🚇 **Automatic tunnel detection** — a database of every tunnel in the map, built from
+-  **Automatic tunnel detection** — a database of every tunnel in the map, built from
   the game's own "covered space" zone data (the same data the game uses to stop rain
   and add reverb inside tunnels). No manual setup for known tunnels.
-- 🗺️ **Map-aware** — ships with TWO databases (vanilla 1.60 and ProMods 2.83 + Middle-East)
+-  **Map-aware** — ships with TWO databases (vanilla 1.60 and ProMods 2.83 + Middle-East)
   and picks the right one automatically by reading which map mods your game actually
   loaded. Drive the Carmel tunnels with an Israeli station on. 🇮🇱
-- 📻 **Works with the real in-game radio** — one click reroutes your existing station
+-  **Works with the real in-game radio** — one click reroutes your existing station
   list through the local tunnel engine. You keep your stations, names and order;
   the in-game radio UI and volume behave exactly as before.
-- 🎚️ **10 different static flavors** — FM hiss, AM crackle, storm static, a distant
+-  **10 different static flavors** — FM hiss, AM crackle, storm static, a distant
   station bleeding through, and more. A different one every tunnel, so it never gets
   repetitive. All procedurally generated (no copyrighted samples).
-- 🏷️ **Manual tunnel tagging** — for map mods or missed tunnels: press *Tag Entry* at
+-  **Manual tunnel tagging** — for map mods or missed tunnels: press *Tag Entry* at
   the portal, *Tag Exit* at the other end. Saved forever, survives updates.
-- 📏 **Realistic threshold** — short underpasses and bridges do NOT kill the signal;
+-  **Realistic threshold** — short underpasses and bridges do NOT kill the signal;
   only genuinely long covered stretches (200 m+) do, like real life.
-- ✅ **Version aware** — the app shows your game version, the tunnel-database version,
+-  **Version aware** — the app shows your game version, the tunnel-database version,
   and the telemetry plugin revision, and warns clearly if they don't match.
 
 ## Requirements
@@ -53,7 +53,7 @@ own in-game radio stations**.
    clearly on any mismatch.
 2. **.NET 8 Desktop Runtime** (free, one-time install from Microsoft:
    https://dotnet.microsoft.com/download/dotnet/8.0 → ".NET Desktop Runtime").
-3. **Telemetry plugin** — ✅ **included in this zip** (`telemetry-plugin\scs-telemetry.dll`,
+3. **Telemetry plugin** —  **included in this zip** (`telemetry-plugin\scs-telemetry.dll`,
    the standard open-source RenCloud SCS SDK plugin v1.12.1, MIT-licensed).
    Newer versions, source code and updates:
    https://github.com/RenCloud/scs-sdk-plugin/releases
